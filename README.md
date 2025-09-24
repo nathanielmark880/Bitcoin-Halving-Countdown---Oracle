@@ -10,6 +10,8 @@ A decentralized smart contract that tracks Bitcoin block height via oracle and p
 - 🛡️ **Authorized Oracles**: Secure oracle management system
 - 💰 **Reward Calculations**: Current and next block reward calculations
 - 📈 **Progress Tracking**: Percentage progress within current halving epoch
+- 🎯 **Prediction Market**: Stake STX to predict exact halving blocks and earn rewards
+- 🏆 **Competitive Gaming**: Track accuracy and compete with other predictors
 
 ## 🚀 Quick Start
 
@@ -33,6 +35,34 @@ clarinet deploy
 #### View Halving Progress
 ```clarity
 (contract-call? .Halving get-halving-progress)
+```
+
+## 🎯 Halving Prediction Market
+
+### Stake and Predict
+```clarity
+;; Predict exact halving block (stake 0.1 STX)
+(contract-call? .Halving predict-halving-block u5 u1050000)
+```
+
+### Check Your Prediction
+```clarity
+(contract-call? .Halving get-user-prediction u5 tx-sender)
+```
+
+### View Market Stats
+```clarity
+(contract-call? .Halving get-prediction-stats u5)
+```
+
+### Early Withdrawal (20% penalty)
+```clarity
+(contract-call? .Halving withdraw-prediction u5)
+```
+
+### Resolve Market (Oracle/Owner Only)
+```clarity
+(contract-call? .Halving resolve-epoch-predictions u5 u1049995)
 ```
 
 ## 🔧 Oracle Management
@@ -64,7 +94,10 @@ clarinet deploy
 | `get-next-block-reward` | Next halving block reward |
 | `get-halving-progress` | Progress within current epoch |
 | `estimate-time-to-halving` | Time estimates for next halving |
-| `get-network-statistics` | Overall Bitcoin network stats |
+|| `get-network-statistics` | Overall Bitcoin network stats |
+|| `get-prediction-stats` | Epoch prediction market statistics |
+|| `get-user-prediction` | User's prediction for specific epoch |
+|| `calculate-prediction-accuracy` | Accuracy metrics for resolved predictions |
 
 ### Public Functions
 
