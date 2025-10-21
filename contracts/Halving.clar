@@ -32,6 +32,66 @@
 (define-map epoch-stakes uint uint)
 (define-map epoch-resolved uint {resolved: bool, actual-block: uint})
 (define-map prediction-treasury principal uint)
+(define-map predictor-stats {epoch: uint, predictor: principal} {wins: uint, total: uint, accuracy: uint})
+(define-map oracle-reputation principal {score: uint, last-quality-check: uint})
+(define-map top-predictors uint principal)
+(define-data-var leaderboard-size uint u0)
+
+(define-public (update-predictor-stats (epoch uint) (predictor principal) (won bool))
+  (let
+    (
+      (current-stats (default-to {wins: u0, total: u0, accuracy: u0}
+        (map-get? predictor-stats {epoch: epoch, predictor: predictor})))
+      (new-wins (if won (+ (get wins current-stats) u1) (get wins current-stats)))
+      (new-total (+ (get total current-stats) u1))
+      (new-accuracy (/ (* new-wins u10000) new-total))
+    )
+    (map-set predictor-stats
+      {epoch: epoch, predictor: predictor}
+      {wins: new-wins, total: new-total, accuracy: new-accuracy}
+    )
+    (ok {wins: new-wins, total: new-total, accuracy: new-accuracy})
+  )
+)
+
+(define-public (adjust-oracle-reputation (oracle principal) (quality-score uint))
+  (let
+    (
+      (current-rep (default-to {score: u500, last-quality-check: u0}
+        (map-get? oracle-reputation oracle)))
+      (current-score (get score current-rep))
+      (adjustment (if (> quality-score u50)
+        (let ((calc (/ quality-score u20))) (if (> calc u50) u50 calc))
+        (let ((reduced (- current-score (/ (- u50 quality-score) u10)))) (if (< reduced u950) u950 reduced))))
+      (adjusted-score (+ current-score adjustment))
+      (capped-low (if (< adjusted-score u0) u0 adjusted-score))
+      (new-score (if (> capped-low u1000) u1000 capped-low))
+    )
+    (map-set oracle-reputation
+      oracle
+      {score: new-score, last-quality-check: stacks-block-height}
+    )
+    (ok {score: new-score, last-quality-check: stacks-block-height})
+  )
+)
+
+(define-public (update-leaderboard (predictor principal) (epoch uint))
+  (let
+    (
+      (stats (unwrap! (map-get? predictor-stats {epoch: epoch, predictor: predictor})
+        (err u404)))
+      (current-size (var-get leaderboard-size))
+    )
+    (if (< current-size u100)
+      (begin
+        (map-set top-predictors current-size predictor)
+        (var-set leaderboard-size (+ current-size u1))
+        (ok true)
+      )
+      (ok true)
+    )
+  )
+)
 
 (define-read-only (get-contract-info)
   {
@@ -343,21 +403,26 @@
           (predicted-block (get predicted-block pred-data))
           (distance (if (> predicted-block actual-block)
                       (- predicted-block actual-block)
-                      (- actual-block predicted-block))))
+                      (- actual-block predicted-block)))
+          (is-winner (<= distance PREDICTION-TOLERANCE)))
       
-      (asserts! (<= distance PREDICTION-TOLERANCE) ERR-INVALID-HEIGHT)
+      (asserts! is-winner ERR-INVALID-HEIGHT)
       (asserts! (not (get withdrawn pred-data)) ERR-ALREADY-WITHDRAWN)
       
       (let ((base-reward (/ total-stake u2))
-            (bonus-multiplier (if (get early-bonus pred-data) u15 u10))
-            (final-reward (/ (* base-reward bonus-multiplier) u10)))
+            (early-mult (if (get early-bonus pred-data) u15 u10))
+            (early-reward (/ (* base-reward early-mult) u10))
+            (accuracy-multiplier (calculate-reward-multiplier winner epoch))
+            (final-reward (/ (* early-reward accuracy-multiplier) u100)))
         
+        (unwrap! (update-predictor-stats epoch winner true) ERR-INVALID-ORACLE)
+        (unwrap! (update-leaderboard winner epoch) ERR-INVALID-ORACLE)
         (try! (as-contract (stx-transfer? final-reward tx-sender winner)))
         
         (map-set epoch-predictions {epoch: epoch, predictor: winner}
           (merge pred-data {withdrawn: true}))
         
-        (ok {winner: winner, reward: final-reward, distance: distance})
+        (ok {winner: winner, reward: final-reward, distance: distance, multiplier: accuracy-multiplier})
       )
     )
   )
@@ -393,4 +458,55 @@
       none
     )
   )
+)
+
+(define-read-only (calculate-reward-multiplier (predictor principal) (epoch uint))
+  (let
+    (
+      (stats (map-get? predictor-stats {epoch: epoch, predictor: predictor}))
+    )
+    (match stats
+      stats-data
+        (let
+          (
+            (accuracy (get accuracy stats-data))
+          )
+          (if (>= accuracy u8000)
+            u200
+            (if (>= accuracy u5000)
+              u150
+              u100
+            )
+          )
+        )
+      u100
+    )
+  )
+)
+
+(define-read-only (get-predictor-stats (epoch uint) (predictor principal))
+  (map-get? predictor-stats {epoch: epoch, predictor: predictor})
+)
+
+(define-read-only (get-oracle-reputation (oracle principal))
+  (map-get? oracle-reputation oracle)
+)
+
+(define-read-only (get-leaderboard (start uint) (limit uint))
+  (let
+    (
+      (calculated-end (+ start limit))
+      (max-size (var-get leaderboard-size))
+      (end (if (> calculated-end max-size) max-size calculated-end))
+    )
+    {
+      start: start,
+      end: end,
+      total: max-size
+    }
+  )
+)
+
+(define-read-only (get-leaderboard-entry (position uint))
+  (map-get? top-predictors position)
 )
